@@ -1,0 +1,90 @@
+# VLC Redesign
+
+A desktop media player built from the community Figma concept **"VLC Redesign"**. It uses
+VLC's own playback engine (**libVLC**), so it plays everything VLC plays, but the interface
+is new: a frameless dark window, an orange play button, a wedge-shaped volume control, and
+overlay panels for the queue, settings and tracks.
+
+> This is a concept implementation. It isn't affiliated with VideoLAN. VLC is a trademark of VideoLAN.
+
+## Run it
+
+Requirements:
+- Windows 10/11.
+- **VLC 3 (64-bit)** installed. The player loads `libvlc.dll` from the VLC install folder,
+  or from the folder in the `VLC_PATH` environment variable.
+- Python 3.10 or later.
+
+First-time setup (from this folder):
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+Start the player. You can pass files or folders to play:
+
+```bash
+run.bat
+```
+
+```bash
+run.bat "D:\Movies\film.mkv"
+```
+
+## What's in the design, and what it does here
+
+| Area | Implemented |
+|---|---|
+| **Title bar** | Cone logo, menu (⋯), library toggle, folder breadcrumb of the current file, centred title, minimise / maximise / fullscreen / close. Drag to move, double-click to maximise, resize from the window edges (with Aero Snap). |
+| **Control bar** | Previous, play/pause pill, next, elapsed time, seek bar (hover time, chapter ticks, optional subtitle-cue marks), duration, mute, volume wedge (click, drag or scroll), tracks, subtitles, settings and queue buttons. |
+| **Queue panel** | Queue (drag to reorder, item count and total length, sort, repeat off/all/one, shuffle, remove, add), Bookmarks (add at the current time, click to seek, rename, delete; saved per file), Chapters (click to jump; the current chapter is highlighted). |
+| **Settings → Playback** | Subtitle timeline on the seek bar, statistics overlay, resume where you left off, sleep timer (minutes or end of item), audio visualiser, speed slider from 0.25× to 2×. *Reverse* is shown disabled because libVLC 3 can't play in reverse. |
+| **Settings → Video** | Flip, rotate, zoom, aspect ratio, crop, deinterlace, and brightness / contrast / saturation / hue / gamma. |
+| **Settings → Audio** | Audio track, stereo mode, audio delay (field and slider), equaliser presets plus 10 bands and preamp. |
+| **Settings → Subtitles** | Subtitle track, add a subtitle file, subtitle delay, and font, size, colour and background box (these apply on the next start). |
+| **Tracks popup** | Video, audio and subtitle tracks with check marks, audio output devices with refresh, external subtitle tracks, and a "Show Preferences" button. |
+| **Library sidebar** | Home (Continue Watching, Listen Again, frequently visited folders and playlists), Videos, Music, Network streams, Playlists (create, rename, delete, add to), History, and a button to add a folder. Back/forward, sort, details toggle, search filter, and "show in Explorer". |
+
+Also: drag and drop files, folders or subtitles onto the window; fullscreen with an
+auto-hiding control bar; on-screen messages; snapshots; always-on-top. The queue, volume,
+window position, history, resume points, bookmarks and playlists are kept in
+`%APPDATA%\VLCRedesign\library.json`.
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| Space | Play / pause |
+| F / F11, Esc | Fullscreen, exit fullscreen or close panels |
+| ← → / Shift / Ctrl | Seek 10 s / 3 s / 1 min |
+| ↑ ↓, M | Volume, mute |
+| N / P, S, E | Next / previous, stop, next frame |
+| [ ] = | Slower / faster / normal speed |
+| V, B, H / J | Cycle subtitles, cycle audio track, subtitle delay |
+| Ctrl+O / Ctrl+F / Ctrl+N | Open a file / folder / network stream |
+| Ctrl+L, Q, Ctrl+P | Library, queue, settings |
+| Ctrl+B, Shift+S | Add a bookmark, take a snapshot |
+
+## Code layout
+
+```
+vlcredesign/
+  __main__.py    app setup (font, stylesheet, icon)
+  mainwindow.py  frameless window, title bar, video surface, control bar, play queue
+  engine.py      libVLC wrapper (python-vlc); all playback goes through VLC
+  panels.py      queue / bookmarks / chapters, settings, and the tracks popup
+  library.py     sidebar library
+  widgets.py     custom-painted controls (seek bar, volume wedge, toggles, tabs, sliders)
+  rows.py        the list-row delegate shared by every list
+  icons.py       line-icon set and the cone artwork
+  theme.py       colour tokens and the Qt stylesheet
+  store.py       JSON persistence and helpers
+```
+
+### Implementation notes
+- libVLC draws into a native child window. The overlay panels are native windows too, so
+  they can sit on top of the video. Rounded corners come from window masks.
+- In libVLC 3, flip, rotate and the audio visualisers only work as instance options. When
+  you change one, the engine rebuilds the libVLC instance at the current position and keeps
+  the rest of your settings.
