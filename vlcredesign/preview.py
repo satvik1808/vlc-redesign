@@ -211,8 +211,10 @@ class PreviewPopup(QWidget):
         self._img_size = (PREVIEW_W, 108)
         self._fade = Tween(self, 0.0, 120, on_step=self._faded)
 
+    MAX_OPACITY = 0.95   # a touch see-through; the frame stays clearly readable
+
     def _faded(self, t: float) -> None:
-        self.setWindowOpacity(t)
+        self.setWindowOpacity(t * self.MAX_OPACITY)
         if t <= 0.0:
             self.hide()
 

@@ -608,6 +608,9 @@ class _SegButton(QAbstractButton):
         self.update()
 
 
+OVERLAY_OPACITY = 0.86   # translucency of the floating panels over the video
+
+
 class Panel(QWidget):
     """Rounded, opaque panel. Rendered as a native child window so it can sit above the
     libVLC video surface (which is itself a native window)."""

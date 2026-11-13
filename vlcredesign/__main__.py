@@ -1,8 +1,21 @@
 import sys
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt
 from PySide6.QtGui import QFont, QGuiApplication, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QMenu, QMessageBox
+
+MENU_OPACITY = 0.95
+
+
+class _TranslucentPopups(QObject):
+    """Makes every menu and drop-down list slightly see-through as it opens."""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Show and isinstance(obj, QMenu):
+            obj.setWindowOpacity(MENU_OPACITY)
+        elif ev.type() == QEvent.Show and obj.isWidgetType() and obj.isWindow()                 and isinstance(obj.parent(), QComboBox):
+            obj.setWindowOpacity(MENU_OPACITY)         # the combo box's pop-up list
+        return False
 
 
 def _app_icon() -> QIcon:
@@ -33,8 +46,12 @@ def main() -> int:
     app.setFont(f)
     app.setStyle("Fusion")
     app.setStyleSheet(theme.stylesheet(family))
-    for effect in (Qt.UI_AnimateMenu, Qt.UI_FadeMenu, Qt.UI_AnimateTooltip, Qt.UI_FadeTooltip):
+    # (menu *fade* would animate opacity back to 100%, so menus use the roll-out effect instead)
+    for effect in (Qt.UI_AnimateMenu, Qt.UI_AnimateCombo, Qt.UI_AnimateTooltip, Qt.UI_FadeTooltip):
         app.setEffectEnabled(effect, True)
+    app.setEffectEnabled(Qt.UI_FadeMenu, False)
+    popups = _TranslucentPopups(app)
+    app.installEventFilter(popups)
 
     try:
         from .mainwindow import MainWindow

@@ -23,7 +23,7 @@ from .panels import QueuePanel, SettingsPanel, TracksPopup, subtitle_args_from_s
 from .store import MEDIA_EXT, SUB_EXT, Store, fmt_short, fmt_time, mrl_to_path, title_of, to_mrl
 from .anim import Tween
 from .preview import FramePreviewer, PreviewPopup
-from .widgets import IconButton, Panel, PlayButton, SeekBar, VolumeWedge
+from .widgets import OVERLAY_OPACITY, IconButton, Panel, PlayButton, SeekBar, VolumeWedge
 
 APP_TITLE = "VLC Media Player"
 
@@ -403,6 +403,11 @@ class MainWindow(QWidget):
 
         self.queue_panel.slide = self.settings.slide = (36, 0)
         self.tracks.slide = (0, 14)
+        # see-through over the video, like the library pane
+        for w in (self.queue_panel, self.settings, self.tracks):
+            w.max_opacity = OVERLAY_OPACITY
+        self.osd_panel.max_opacity = 0.9
+        self.stats_panel.max_opacity = 0.84
         self._osd_timer = QTimer(self, singleShot=True, interval=1400,
                                  timeout=lambda: self.osd_panel.animate_open(False, 260))
         self._stats_timer = QTimer(self, interval=1000, timeout=self._update_stats)
@@ -545,7 +550,7 @@ class MainWindow(QWidget):
         self.layout_stage()
 
     def _animated_panels(self) -> tuple:
-        return (self.library, self.queue_panel, self.settings, self.tracks, self.osd_panel)
+        return (self.library, self.queue_panel, self.settings, self.tracks, self.osd_panel, self.stats_panel)
 
     def _place_library(self) -> int:
         r = self.stage.rect()
@@ -1133,11 +1138,11 @@ class MainWindow(QWidget):
     def set_stats_visible(self, on: bool) -> None:
         if on:
             self._update_stats()
-            self._show_overlay(self.stats_panel)
+            self.stats_panel.animate_open(True, 160)
             self._stats_timer.start()
         else:
             self._stats_timer.stop()
-            self.stats_panel.hide()
+            self.stats_panel.animate_open(False, 160)
         self.layout_stage()
 
     def _update_stats(self) -> None:
