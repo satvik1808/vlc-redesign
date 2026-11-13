@@ -5,7 +5,9 @@ import os
 import random
 import re
 
-from PySide6.QtCore import QByteArray, QEvent, QPoint, QRect, QRectF, QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtCore import (
+    QByteArray, QEasingCurve, QEvent, QPoint, QRect, QRectF, QStandardPaths, Qt, QTimer, QUrl, QVariantAnimation,
+)
 from PySide6.QtGui import QColor, QCursor, QFont, QKeySequence, QPainter, QPainterPath, QRegion, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox,
@@ -14,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from . import icons, theme, winframe
 from .engine import Engine, parse_duration_async, parsed_duration
-from .library import Library, scan_folder
+from .library import OPACITY as LIB_OPACITY, Library, scan_folder
 from . import thumbs
 from .panels import QueuePanel, SettingsPanel, TracksPopup, subtitle_args_from_store
 from .store import MEDIA_EXT, SUB_EXT, Store, fmt_short, fmt_time, mrl_to_path, title_of, to_mrl
@@ -344,6 +346,11 @@ class MainWindow(QWidget):
 
         self.video = VideoSurface(self, self.stage)
         self.library = Library(self)
+        self._lib_open = False
+        self._lib_t = 0.0
+        self._lib_anim = QVariantAnimation(self)
+        self._lib_anim.valueChanged.connect(self._lib_step)
+        self._lib_anim.finished.connect(self._lib_finished)
         self.queue_panel = QueuePanel(self)
         self.settings = SettingsPanel(self)
         self.tracks = TracksPopup(self)
@@ -449,15 +456,14 @@ class MainWindow(QWidget):
         self.video.radius = 0 if fs else 8
         self.video.setGeometry(vr)
         self.video.resizeEvent(None)
-        lib_w = self.library.total_width(r.width())
-        self.library.setGeometry(0, 0, lib_w, r.height())
+        lib_w = self._place_library()
         pw = min(340, max(280, vr.width() // 3))
         side = QRect(vr.right() - pw - 8, vr.top() + 10, pw, max(120, vr.height() - 20))
         self.queue_panel.setGeometry(side)
         self.settings.setGeometry(side)
         th = min(430, side.height())
         self.tracks.setGeometry(QRect(side.left(), side.bottom() - th + 1, pw, th))
-        left = (lib_w if self.library.isVisible() else vr.left()) + 12
+        left = (lib_w if self._lib_open else vr.left()) + 12
         self.stats_panel.move(left, vr.top() + 12)
         self.osd_panel.move(left, vr.top() + 12 + (self.stats_panel.height() + 8 if self.stats_panel.isVisible() else 0))
 
@@ -466,14 +472,47 @@ class MainWindow(QWidget):
         w.raise_()
 
     # -- panels ----------------------------------------------------------------------
+    LIB_SLIDE = 56  # px the library slides in from while fading
+
     def toggle_library(self) -> None:
-        if self.library.isVisible():
-            self.library.hide()
-        else:
+        self.set_library_open(not self._lib_open)
+
+    def set_library_open(self, open_: bool) -> None:
+        if open_ == self._lib_open:
+            return
+        self._lib_open = open_
+        if open_ and not self.library.isVisible():
             self.library.render()
+            self._lib_t = 0.0
+            self.library.set_opacity(0)
+            self._place_library()
             self._show_overlay(self.library)
-        self.titlebar.b_side.setChecked(self.library.isVisible())
+        a = self._lib_anim
+        a.stop()
+        end = 1.0 if open_ else 0.0
+        a.setEasingCurve(QEasingCurve.OutCubic if open_ else QEasingCurve.InCubic)
+        a.setDuration(max(1, int(220 * abs(end - self._lib_t))))
+        a.setStartValue(self._lib_t)
+        a.setEndValue(end)
+        a.start()
+        self.titlebar.b_side.setChecked(open_)
         self.layout_stage()
+
+    def _place_library(self) -> int:
+        r = self.stage.rect()
+        lib_w = self.library.total_width(r.width())
+        x = -round((1.0 - self._lib_t) * self.LIB_SLIDE)
+        self.library.setGeometry(x, 0, lib_w, r.height())
+        return lib_w
+
+    def _lib_step(self, v) -> None:
+        self._lib_t = float(v)
+        self.library.set_opacity(LIB_OPACITY * self._lib_t)
+        self._place_library()
+
+    def _lib_finished(self) -> None:
+        if not self._lib_open:
+            self.library.hide()
 
     def toggle_right(self, which: str, tab: int | None = None) -> None:
         panels = {"queue": self.queue_panel, "settings": self.settings, "tracks": self.tracks}
@@ -510,8 +549,7 @@ class MainWindow(QWidget):
 
     def close_overlays(self) -> None:
         self.close_right()
-        if self.library.isVisible():
-            self.toggle_library()
+        self.set_library_open(False)
 
     def _sync_buttons(self) -> None:
         cb = self.controls
@@ -565,7 +603,7 @@ class MainWindow(QWidget):
             self._idle_ms += 250
         over_controls = self.controls.isVisible() and self.controls.geometry().contains(self.mapFromGlobal(pos))
         if (self._idle_ms > 2500 and self.controls.isVisible() and not over_controls
-                and self.right_panel is None and not self.library.isVisible() and self.engine.is_playing()):
+                and self.right_panel is None and not self._lib_open and self.engine.is_playing()):
             self.controls.hide()
 
     # frameless-window edge resizing
@@ -1066,8 +1104,7 @@ class MainWindow(QWidget):
 
     def _crumb_clicked(self) -> None:
         path = mrl_to_path(self.engine.mrl) if self.engine.mrl else None
-        if not self.library.isVisible():
-            self.toggle_library()
+        self.set_library_open(True)
         if path:
             self.library.open_folder_page(os.path.dirname(path))
         else:
@@ -1151,7 +1188,11 @@ class MainWindow(QWidget):
         return child is None or child is tb.title or isinstance(child, (ConeLogo, QFrame))
 
     def _reapply_native_styles(self) -> None:
-        QTimer.singleShot(0, lambda: winframe.apply_native_styles(int(self.winId())))
+        def apply():
+            winframe.apply_native_styles(int(self.winId()))
+            if self.library.isVisible():  # window recreation drops the layered style
+                self.library.set_opacity(LIB_OPACITY * self._lib_t)
+        QTimer.singleShot(0, apply)
 
     def paintEvent(self, _):
         QPainter(self).fillRect(self.rect(), QColor(theme.WINDOW))

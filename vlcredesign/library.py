@@ -3,6 +3,7 @@ Playlists, History), with back/forward navigation, sort and search."""
 from __future__ import annotations
 
 import os
+import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QFileInfo, QUrl, Qt
@@ -25,6 +26,7 @@ PANEL_W = 300          # default width of the browsable panel (right of the rail
 PANEL_MIN_W = 220
 PANEL_MAX_W = 900
 MIN_VIDEO_W = 240      # keep at least this much of the stage visible beside the library
+OPACITY = 0.84         # library pane translucency over the video
 
 
 class _ResizeGrip(QWidget):
@@ -250,6 +252,21 @@ class Library(Panel):
         return any(norm.startswith(os.path.normcase(os.path.abspath(f))) for f in self.store.data["folders"]["music"])
 
     # rendering ---------------------------------------------------------------
+    # -- translucency -----------------------------------------------------------------
+    def set_opacity(self, alpha: float) -> None:
+        """Whole-pane opacity (0..1). The pane is a native child window sitting over libVLC's
+        video window, so Qt's own opacity can't blend it; use a layered child window instead."""
+        if sys.platform != "win32":
+            return
+        import ctypes
+        u32 = ctypes.windll.user32
+        u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        h = int(self.winId())
+        ex = u32.GetWindowLongPtrW(h, -20)            # GWL_EXSTYLE
+        if not ex & 0x80000:                            # WS_EX_LAYERED
+            u32.SetWindowLongPtrW(h, -20, ctypes.c_ssize_t(ex | 0x80000))
+        u32.SetLayeredWindowAttributes(h, 0, max(0, min(255, round(alpha * 255))), 2)  # LWA_ALPHA
+
     # -- width ---------------------------------------------------------------------
     def total_width(self, stage_w: int) -> int:
         """Rail + panel width to use on a stage of the given width (saved width, clamped)."""
