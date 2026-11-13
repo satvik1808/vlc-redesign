@@ -2,7 +2,9 @@
 tracks, library), so they all share the design's row styling."""
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QPointF, QRectF, QSize, Qt, Slot
+import time
+
+from PySide6.QtCore import QModelIndex, QPointF, QRectF, QSize, Qt, QTimer, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QStyle, QStyledItemDelegate
 
@@ -23,9 +25,43 @@ THUMB_W, THUMB_H = 64, 36
 
 
 class RowDelegate(QStyledItemDelegate):
+    HOVER_MS = 130
+    THUMB_FADE_S = 0.22
+
     def __init__(self, parent=None):
         super().__init__(parent)
         thumbs.loader().ready.connect(self._thumb_ready)
+        self._hov: dict[int, float] = {}      # row -> hover highlight strength (0..1)
+        self._tgt: dict[int, float] = {}
+        self._fading = False                   # a thumbnail is mid fade-in
+        self._tick = QTimer(self, interval=16, timeout=self._step)
+
+    def _step(self) -> None:
+        d = self._tick.interval() / self.HOVER_MS
+        changed = False
+        for row, tgt in list(self._tgt.items()):
+            cur = self._hov.get(row, 0.0)
+            new = min(tgt, cur + d) if tgt > cur else max(tgt, cur - d)
+            if new != cur:
+                self._hov[row] = new
+                changed = True
+            if new == 0.0 and tgt == 0.0:
+                self._hov.pop(row, None)
+                self._tgt.pop(row, None)
+        view = self.parent()
+        if (changed or self._fading) and view is not None:
+            self._fading = False
+            view.viewport().update()
+        elif not changed:
+            self._tick.stop()
+
+    def _hover_amount(self, row: int, hovered: bool) -> float:
+        tgt = 1.0 if hovered else 0.0
+        if self._tgt.get(row, 0.0) != tgt or (row in self._hov and self._hov[row] != tgt):
+            self._tgt[row] = tgt
+            if not self._tick.isActive():
+                self._tick.start()
+        return self._hov.get(row, 0.0)
 
     @Slot(str)
     def _thumb_ready(self, _path: str) -> None:
@@ -63,9 +99,13 @@ class RowDelegate(QStyledItemDelegate):
 
         sel = bool(option.state & QStyle.State_Selected)
         hover = bool(option.state & QStyle.State_MouseOver)
-        if sel or hover:
+        h = self._hover_amount(index.row(), hover and not sel)
+        if sel or h > 0.0:
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(theme.ACCENT_BG if sel else theme.HOVER))
+            col = QColor(theme.ACCENT_BG if sel else theme.HOVER)
+            if not sel:
+                col.setAlphaF(col.alphaF() * h)
+            p.setBrush(col)
             p.drawRoundedRect(r.adjusted(4, 1, -4, -1), 4, 4)
 
         current = bool(index.data(CURRENT))
@@ -88,8 +128,20 @@ class RowDelegate(QStyledItemDelegate):
             clip.addRoundedRect(tr_, 4, 4)
             p.save()
             p.setClipPath(clip)
-            pm = thumbs.loader().get(thumb_path)
+            ld = thumbs.loader()
+            pm = ld.get(thumb_path)
+            fade = 1.0
             if pm is not None and not pm.isNull():
+                age = time.monotonic() - ld.ready_at.get(thumb_path, 0.0)
+                if age < self.THUMB_FADE_S:
+                    fade = max(0.0, age / self.THUMB_FADE_S)
+                    self._fading = True
+                    if not self._tick.isActive():
+                        self._tick.start()
+            if pm is not None and not pm.isNull() and fade < 1.0:
+                p.fillRect(tr_, QColor(theme.TRACK))   # placeholder underneath while fading in
+            if pm is not None and not pm.isNull():
+                p.setOpacity(fade)
                 # cover-fit the frame into the slot
                 s = max(tr_.width() / pm.width(), tr_.height() / pm.height())
                 w, h = pm.width() * s, pm.height() * s

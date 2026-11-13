@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QImage, QPixmap
@@ -127,6 +128,7 @@ class ThumbLoader(QObject):
         super().__init__()
         self._cache: dict[str, QPixmap | None] = {}
         self._pending: set[str] = set()
+        self.ready_at: dict[str, float] = {}   # when each thumbnail arrived (for fade-in)
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(2)
         self._done.connect(self._on_done)
@@ -144,6 +146,7 @@ class ThumbLoader(QObject):
         self._pending.discard(path)
         self._cache[path] = None if img.isNull() else QPixmap.fromImage(img)
         if self._cache[path] is not None:
+            self.ready_at[path] = time.monotonic()
             self.ready.emit(path)
 
     def shutdown(self) -> None:

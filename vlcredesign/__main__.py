@@ -33,6 +33,8 @@ def main() -> int:
     app.setFont(f)
     app.setStyle("Fusion")
     app.setStyleSheet(theme.stylesheet(family))
+    for effect in (Qt.UI_AnimateMenu, Qt.UI_FadeMenu, Qt.UI_AnimateTooltip, Qt.UI_FadeTooltip):
+        app.setEffectEnabled(effect, True)
 
     try:
         from .mainwindow import MainWindow

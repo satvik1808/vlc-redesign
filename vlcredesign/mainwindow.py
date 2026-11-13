@@ -6,20 +6,23 @@ import random
 import re
 
 from PySide6.QtCore import (
-    QByteArray, QEasingCurve, QEvent, QPoint, QRect, QRectF, QStandardPaths, Qt, QTimer, QUrl, QVariantAnimation,
+    QByteArray, QEasingCurve, QEvent, QPoint, QRect, QRectF, QStandardPaths, Qt, QTimer, QUrl,
 )
 from PySide6.QtGui import QColor, QCursor, QFont, QKeySequence, QPainter, QPainterPath, QRegion, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox,
+    QApplication, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QInputDialog, QLabel, QMenu,
+    QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
 
 from . import icons, theme, winframe
 from .engine import Engine, parse_duration_async, parsed_duration
-from .library import OPACITY as LIB_OPACITY, Library, scan_folder
+from .library import Library, scan_folder
 from . import thumbs
 from .panels import QueuePanel, SettingsPanel, TracksPopup, subtitle_args_from_store
 from .store import MEDIA_EXT, SUB_EXT, Store, fmt_short, fmt_time, mrl_to_path, title_of, to_mrl
+from .anim import Tween
+from .preview import FramePreviewer, PreviewPopup
 from .widgets import IconButton, Panel, PlayButton, SeekBar, VolumeWedge
 
 APP_TITLE = "VLC Media Player"
@@ -178,10 +181,23 @@ class VideoSurface(QWidget):
         self.mode = "idle"
         self.caption = ""
         self.radius = 8
+        self._fade = Tween(self, 0.0, 450)   # cone + hint fade/rise in on the idle/audio screen
+        self._shown_once = False
 
     def set_mode(self, mode: str, caption: str = "") -> None:
+        changed = (mode, caption) != (self.mode, self.caption)
         self.mode, self.caption = mode, caption
+        if changed and mode != "video" and self.isVisible():
+            self._fade.snap(0.0)
+            self._fade.to(1.0)
         self.update()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self._shown_once:
+            self._shown_once = True
+            self._fade.snap(0.0)
+            QTimer.singleShot(120, lambda: self._fade.to(1.0))
 
     def resizeEvent(self, e):
         if self.radius:
@@ -201,8 +217,13 @@ class VideoSurface(QWidget):
         # floor band like the design's stage
         floor = int(r.height() * 0.62)
         p.fillRect(QRect(0, floor, r.width(), r.height() - floor), QColor("#272625"))
+        t = self._fade.value
+        p.setOpacity(t)
         cell = max(4, min(10, r.height() // 45))
-        icons.paint_pixel_cone(p, r.width() / 2, floor, cell)
+        p.save()
+        p.setClipRect(QRect(0, 0, r.width(), floor))       # the cone rises out of the floor
+        icons.paint_pixel_cone(p, r.width() / 2, floor + round((1.0 - t) * cell * 4), cell)
+        p.restore()
         f = QFont(self.font())
         f.setPixelSize(13)
         p.setFont(f)
@@ -346,11 +367,6 @@ class MainWindow(QWidget):
 
         self.video = VideoSurface(self, self.stage)
         self.library = Library(self)
-        self._lib_open = False
-        self._lib_t = 0.0
-        self._lib_anim = QVariantAnimation(self)
-        self._lib_anim.valueChanged.connect(self._lib_step)
-        self._lib_anim.finished.connect(self._lib_finished)
         self.queue_panel = QueuePanel(self)
         self.settings = SettingsPanel(self)
         self.tracks = TracksPopup(self)
@@ -359,7 +375,10 @@ class MainWindow(QWidget):
         for w in (self.library, self.queue_panel, self.settings, self.tracks, self.stats_panel, self.osd_panel):
             w.hide()
 
-        self._osd_timer = QTimer(self, singleShot=True, interval=1400, timeout=self.osd_panel.hide)
+        self.queue_panel.slide = self.settings.slide = (36, 0)
+        self.tracks.slide = (0, 14)
+        self._osd_timer = QTimer(self, singleShot=True, interval=1400,
+                                 timeout=lambda: self.osd_panel.animate_open(False, 260))
         self._stats_timer = QTimer(self, interval=1000, timeout=self._update_stats)
         self._parse_timer = QTimer(self, interval=500, timeout=self._poll_parsing)
         self._sleep_timer = QTimer(self, singleShot=True, timeout=self._sleep_fired)
@@ -368,6 +387,11 @@ class MainWindow(QWidget):
         self._history_timer.start()
         self._last_mouse = QPoint()
         self._idle_ms = 0
+        self.previewer = FramePreviewer(self)
+        self.preview_popup = PreviewPopup()
+        self._chapter_names: list[tuple[int, str]] = []
+        self._controls_shown = True
+        self._bar_t = Tween(self.controls, 1.0, 220, on_step=self._bar_step)
 
         self._wire()
         self._shortcuts()
@@ -393,6 +417,9 @@ class MainWindow(QWidget):
         cb.b_prev.clicked.connect(self.prev)
         cb.b_next.clicked.connect(self.next)
         cb.seek.seekRequested.connect(e.seek)
+        cb.seek.hoverAt.connect(self._seek_hover)
+        cb.seek.hoverLeft.connect(self.preview_popup.fade_out)
+        self.previewer.frameReady.connect(lambda _ms, img: self.preview_popup.set_frame(img))
         cb.seek.scrubbing.connect(lambda ms: cb.t_cur.setText(fmt_time(ms)))
         cb.vol.volumeChanged.connect(e.set_volume)
         cb.b_mute.clicked.connect(lambda: e.set_muted(not e.muted()))
@@ -459,10 +486,10 @@ class MainWindow(QWidget):
         lib_w = self._place_library()
         pw = min(340, max(280, vr.width() // 3))
         side = QRect(vr.right() - pw - 8, vr.top() + 10, pw, max(120, vr.height() - 20))
-        self.queue_panel.setGeometry(side)
-        self.settings.setGeometry(side)
+        self.queue_panel.place(side)
+        self.settings.place(side)
         th = min(430, side.height())
-        self.tracks.setGeometry(QRect(side.left(), side.bottom() - th + 1, pw, th))
+        self.tracks.place(QRect(side.left(), side.bottom() - th + 1, pw, th))
         left = (lib_w if self._lib_open else vr.left()) + 12
         self.stats_panel.move(left, vr.top() + 12)
         self.osd_panel.move(left, vr.top() + 12 + (self.stats_panel.height() + 8 if self.stats_panel.isVisible() else 0))
@@ -472,47 +499,31 @@ class MainWindow(QWidget):
         w.raise_()
 
     # -- panels ----------------------------------------------------------------------
-    LIB_SLIDE = 56  # px the library slides in from while fading
-
     def toggle_library(self) -> None:
         self.set_library_open(not self._lib_open)
+
+    @property
+    def _lib_open(self) -> bool:
+        return self.library.is_open()
 
     def set_library_open(self, open_: bool) -> None:
         if open_ == self._lib_open:
             return
-        self._lib_open = open_
         if open_ and not self.library.isVisible():
             self.library.render()
-            self._lib_t = 0.0
-            self.library.set_opacity(0)
             self._place_library()
-            self._show_overlay(self.library)
-        a = self._lib_anim
-        a.stop()
-        end = 1.0 if open_ else 0.0
-        a.setEasingCurve(QEasingCurve.OutCubic if open_ else QEasingCurve.InCubic)
-        a.setDuration(max(1, int(220 * abs(end - self._lib_t))))
-        a.setStartValue(self._lib_t)
-        a.setEndValue(end)
-        a.start()
+        self.library.animate_open(open_, 220)
         self.titlebar.b_side.setChecked(open_)
         self.layout_stage()
+
+    def _animated_panels(self) -> tuple:
+        return (self.library, self.queue_panel, self.settings, self.tracks, self.osd_panel)
 
     def _place_library(self) -> int:
         r = self.stage.rect()
         lib_w = self.library.total_width(r.width())
-        x = -round((1.0 - self._lib_t) * self.LIB_SLIDE)
-        self.library.setGeometry(x, 0, lib_w, r.height())
+        self.library.place(QRect(0, 0, lib_w, r.height()))
         return lib_w
-
-    def _lib_step(self, v) -> None:
-        self._lib_t = float(v)
-        self.library.set_opacity(LIB_OPACITY * self._lib_t)
-        self._place_library()
-
-    def _lib_finished(self) -> None:
-        if not self._lib_open:
-            self.library.hide()
 
     def toggle_right(self, which: str, tab: int | None = None) -> None:
         panels = {"queue": self.queue_panel, "settings": self.settings, "tracks": self.tracks}
@@ -521,7 +532,7 @@ class MainWindow(QWidget):
             return
         for k, w in panels.items():
             if k != which:
-                w.hide()
+                w.animate_open(False)
         self.right_panel = which
         w = panels[which]
         if which == "tracks":
@@ -533,7 +544,7 @@ class MainWindow(QWidget):
             self._refresh_chapters()
         elif which == "settings":
             self.settings.refresh_tracks()
-        self._show_overlay(w)
+        w.animate_open(True)
         self._sync_buttons()
 
     def open_settings_tab(self, i: int) -> None:
@@ -543,7 +554,7 @@ class MainWindow(QWidget):
 
     def close_right(self) -> None:
         for w in (self.queue_panel, self.settings, self.tracks):
-            w.hide()
+            w.animate_open(False)
         self.right_panel = None
         self._sync_buttons()
 
@@ -574,8 +585,9 @@ class MainWindow(QWidget):
     def toggle_fullscreen(self) -> None:
         if self.isFullScreen():
             self.titlebar.show()
-            self.controls.show()
             self._autohide.stop()
+            self._controls_shown = True
+            self._bar_t.snap(1.0)
             self.showMaximized() if self._was_maximized else self.showNormal()
             self._reapply_native_styles()
         else:
@@ -597,14 +609,39 @@ class MainWindow(QWidget):
         if pos != self._last_mouse:
             self._last_mouse = pos
             self._idle_ms = 0
-            if not self.controls.isVisible():
-                self.controls.show()
+            if not self._controls_shown:
+                self._set_controls_shown(True)
         else:
             self._idle_ms += 250
-        over_controls = self.controls.isVisible() and self.controls.geometry().contains(self.mapFromGlobal(pos))
-        if (self._idle_ms > 2500 and self.controls.isVisible() and not over_controls
+        over_controls = self._controls_shown and self.controls.geometry().contains(self.mapFromGlobal(pos))
+        if (self._idle_ms > 2500 and self._controls_shown and not over_controls
                 and self.right_panel is None and not self._lib_open and self.engine.is_playing()):
-            self.controls.hide()
+            self._set_controls_shown(False)
+
+    # control bar slide/fade (fullscreen auto-hide)
+    BAR_H = 46
+
+    def _set_controls_shown(self, show: bool) -> None:
+        self._controls_shown = show
+        if show and not self.controls.isVisible():
+            self.controls.show()
+        self._bar_t.to(1.0 if show else 0.0, 220 if show else 320,
+                       QEasingCurve.OutCubic if show else QEasingCurve.InOutCubic)
+
+    def _bar_step(self, t: float) -> None:
+        c = self.controls
+        c.setFixedHeight(max(0, round(self.BAR_H * t)))
+        if t >= 1.0:
+            c.setGraphicsEffect(None)
+            c.show()
+            return
+        eff = c.graphicsEffect()
+        if not isinstance(eff, QGraphicsOpacityEffect):
+            eff = QGraphicsOpacityEffect(c)
+            c.setGraphicsEffect(eff)
+        eff.setOpacity(t)
+        if t <= 0.0:
+            c.hide()
 
     # frameless-window edge resizing
     def _edges(self, p: QPoint):
@@ -754,7 +791,9 @@ class MainWindow(QWidget):
         path = mrl_to_path(mrl)
         self.titlebar.crumb.setText("  " + (os.path.basename(os.path.dirname(path)) if path else "Network"))
         self.controls.seek.chapters = []
+        self._chapter_names = []
         self._last_chapter = -2
+        self._disable_previews()
         self.video.set_mode("audio", entry["title"])
         self.queue_panel.refresh_queue()
         self._refresh_bookmarks()
@@ -831,6 +870,7 @@ class MainWindow(QWidget):
             self.osd(f"Couldn't play {entry['title'] if entry else 'media'}")
         if state == "stopped":
             self.video.set_mode("idle")
+            self._disable_previews()
             self.controls.seek.set_position(0)
             self.controls.t_cur.setText(fmt_time(0))
         if state == "paused":
@@ -857,6 +897,41 @@ class MainWindow(QWidget):
     def _vout_changed(self, has_video: bool) -> None:
         entry = self.queue.current()
         self.video.set_mode("video" if has_video else "audio", entry["title"] if entry else "")
+        mrl = self.engine.mrl
+        if has_video and mrl and mrl_to_path(mrl):      # local files only: no second network stream
+            w, h = self.engine.video_size()
+            self._enable_previews(mrl, (w / h) if w and h else 16 / 9)
+        else:
+            self._disable_previews()
+
+    # -- seek-bar hover previews -----------------------------------------------------
+    def _enable_previews(self, mrl: str, aspect: float) -> None:
+        try:
+            self.previewer.open(mrl, aspect)
+        except Exception:
+            self._disable_previews()
+            return
+        self.preview_popup.set_frame_size(self.previewer._w, self.previewer._h)
+        self.controls.seek.previews = True
+
+    def _disable_previews(self) -> None:
+        self.controls.seek.previews = False
+        self.preview_popup.fade_out()
+        self.previewer.close()
+
+    def _seek_hover(self, ms: int, gx: int) -> None:
+        seek = self.controls.seek
+        top = seek.mapToGlobal(QPoint(0, 0)).y() - 6
+        name = ""
+        for t, n in self._chapter_names:
+            if t <= ms:
+                name = n
+            else:
+                break
+        length = seek.length()
+        self.preview_popup.show_at(QPoint(gx, top), fmt_time(ms, force_hours=length >= 3_600_000),
+                                   name, self.frameGeometry())
+        self.previewer.request(ms)
 
     def _volume_changed(self, v: int, muted: bool) -> None:
         self.controls.vol.set_volume(v, muted)
@@ -987,6 +1062,7 @@ class MainWindow(QWidget):
 
     def _refresh_chapters(self) -> None:
         chapters = self.engine.chapters()
+        self._chapter_names = sorted((t, name) for _, name, t in chapters)
         cur = self.engine.chapter()
         self._last_chapter = cur
         self.controls.seek.chapters = [t for _, _, t in chapters if t > 0]
@@ -1051,7 +1127,7 @@ class MainWindow(QWidget):
     def osd(self, text: str) -> None:
         self.osd_panel.set_text(text)
         self.layout_stage()
-        self._show_overlay(self.osd_panel)
+        self.osd_panel.animate_open(True, 140)
         self._osd_timer.start()
 
     def show_main_menu(self, pos: QPoint) -> None:
@@ -1159,6 +1235,8 @@ class MainWindow(QWidget):
         except OSError:
             pass
         thumbs.loader().shutdown()
+        self.preview_popup.close()
+        self.previewer.release()
         self._clear_edge_cursor()
         for t in (self._stats_timer, self._parse_timer, self._history_timer, self._autohide,
                   self._sleep_timer, self._osd_timer):
@@ -1190,8 +1268,8 @@ class MainWindow(QWidget):
     def _reapply_native_styles(self) -> None:
         def apply():
             winframe.apply_native_styles(int(self.winId()))
-            if self.library.isVisible():  # window recreation drops the layered style
-                self.library.set_opacity(LIB_OPACITY * self._lib_t)
+            for w in self._animated_panels():  # window recreation drops the layered style
+                w.reapply_opacity()
         QTimer.singleShot(0, apply)
 
     def paintEvent(self, _):

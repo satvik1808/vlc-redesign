@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import rows, theme
+from .anim import Tween
 from .engine import STEREO_MODES, VISUALIZERS, Engine
 from .rows import KEY
 from .store import fmt_ms, fmt_short, fmt_total, title_of
@@ -491,8 +492,30 @@ class SettingsPanel(Panel):
         self.engine.set_eq_values(vals[0], vals[1:])
 
     def _toggle_eq(self, on: bool) -> None:
-        self.eq_box.setVisible(on)
         self.b_expand.setText("Collapse Settings  ⌄" if on else "Expand Settings  ›")
+        box = self.eq_box
+        if not hasattr(self, "_eq_t"):
+            self._eq_t = Tween(box, 0.0, 240, on_step=self._eq_step)
+        if not self.isVisible():
+            box.setVisible(on)
+            box.setMaximumHeight(16777215)
+            self._eq_t.snap(1.0 if on else 0.0)
+            return
+        if on and not box.isVisible():
+            box.setMaximumHeight(0)
+            box.setVisible(True)
+        self._eq_full = max(1, box.sizeHint().height())
+        self._eq_t.to(1.0 if on else 0.0)
+
+    def _eq_step(self, t: float) -> None:
+        box = self.eq_box
+        if t >= 1.0:
+            box.setMaximumHeight(16777215)          # done expanding: let it size naturally
+        elif t <= 0.0:
+            box.setVisible(False)
+            box.setMaximumHeight(16777215)
+        else:
+            box.setMaximumHeight(round(getattr(self, "_eq_full", box.sizeHint().height()) * t))
 
     # subtitles
     def _set_sdelay(self, v: float) -> None:

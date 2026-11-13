@@ -3,11 +3,10 @@ Playlists, History), with back/forward navigation, sort and search."""
 from __future__ import annotations
 
 import os
-import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QFileInfo, QUrl, Qt
-from PySide6.QtGui import QColor, QDesktopServices, QPainter
+from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
     QPushButton, QVBoxLayout, QWidget,
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
 from . import rows, theme
 from .rows import KEY
 from .store import AUDIO_EXT, MEDIA_EXT, fmt_short, kind_of, mrl_to_path, title_of, to_mrl
+from .anim import Tween
 from .widgets import IconButton, Panel, dim_label
 
 if TYPE_CHECKING:
@@ -27,6 +27,39 @@ PANEL_MIN_W = 220
 PANEL_MAX_W = 900
 MIN_VIDEO_W = 240      # keep at least this much of the stage visible beside the library
 OPACITY = 0.84         # library pane translucency over the video
+
+
+class _PageCurtain(QWidget):
+    """Covers the list for a moment while a page change animates: the old page slides
+    out and fades while the new one slides in (direction 0 = plain cross-fade)."""
+
+    SHIFT = 36
+
+    def __init__(self, host: QWidget, old: QPixmap, new: QPixmap, direction: int):
+        super().__init__(host)
+        self.old, self.new, self.dir = old, new, direction
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setGeometry(host.rect())
+        self._t = Tween(self, 0.0, 230, on_step=self._step)
+        self.show()
+        self.raise_()
+        self._t.to(1.0)
+
+    def _step(self, t: float) -> None:
+        if t >= 1.0:
+            self.deleteLater()
+        else:
+            self.update()
+
+    def paintEvent(self, _):
+        t = self._t.value
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(theme.PANEL))
+        dx = self.SHIFT * self.dir
+        p.setOpacity(1.0 - t)
+        p.drawPixmap(round(-dx * t), 0, self.old)
+        p.setOpacity(t)
+        p.drawPixmap(round(dx * (1.0 - t)), 0, self.new)
 
 
 class _ResizeGrip(QWidget):
@@ -119,6 +152,8 @@ class Library(Panel):
         self.sort_desc = False
         self.details = True
         self.grip = _ResizeGrip(self)
+        self.max_opacity = OPACITY
+        self.slide = (-56, 0)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -228,20 +263,35 @@ class Library(Panel):
         if push and page != self.page:
             self.back_stack.append(self.page)
             self.fwd_stack.clear()
+        deeper = push and page[0] in ("folder", "playlist")
         self.page = page
-        self.render()
+        self._render_animated(1 if deeper else 0)
 
     def back(self) -> None:
         if self.back_stack:
             self.fwd_stack.append(self.page)
             self.page = self.back_stack.pop()
-            self.render()
+            self._render_animated(-1)
 
     def forward(self) -> None:
         if self.fwd_stack:
             self.back_stack.append(self.page)
             self.page = self.fwd_stack.pop()
+            self._render_animated(1)
+
+    def _render_animated(self, direction: int) -> None:
+        vp = self.list.viewport()
+        if not self.isVisible() or vp.width() < 10:
             self.render()
+            return
+        old = vp.grab()                          # includes any curtain still mid-animation
+        for c in vp.findChildren(_PageCurtain):
+            c.hide()
+            c.deleteLater()
+        self.render()
+        self.list.doItemsLayout()
+        new = vp.grab()
+        _PageCurtain(vp, old, new, direction)
 
     def open_folder_page(self, path: str) -> None:
         kind = "music" if self._is_music_path(path) else "videos"
@@ -252,21 +302,6 @@ class Library(Panel):
         return any(norm.startswith(os.path.normcase(os.path.abspath(f))) for f in self.store.data["folders"]["music"])
 
     # rendering ---------------------------------------------------------------
-    # -- translucency -----------------------------------------------------------------
-    def set_opacity(self, alpha: float) -> None:
-        """Whole-pane opacity (0..1). The pane is a native child window sitting over libVLC's
-        video window, so Qt's own opacity can't blend it; use a layered child window instead."""
-        if sys.platform != "win32":
-            return
-        import ctypes
-        u32 = ctypes.windll.user32
-        u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
-        h = int(self.winId())
-        ex = u32.GetWindowLongPtrW(h, -20)            # GWL_EXSTYLE
-        if not ex & 0x80000:                            # WS_EX_LAYERED
-            u32.SetWindowLongPtrW(h, -20, ctypes.c_ssize_t(ex | 0x80000))
-        u32.SetLayeredWindowAttributes(h, 0, max(0, min(255, round(alpha * 255))), 2)  # LWA_ALPHA
-
     # -- width ---------------------------------------------------------------------
     def total_width(self, stage_w: int) -> int:
         """Rail + panel width to use on a stage of the given width (saved width, clamped)."""
