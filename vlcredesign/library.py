@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QFileInfo, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
+    QAbstractItemView, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
     QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -333,6 +333,45 @@ class Library(Panel):
         n = getattr(self, f"_page_{kind}")()
         self.count.setText(f"{n} item{'s' if n != 1 else ''}")
         self._filter(self.search.text())
+        new_page = self.page != getattr(self, "_rendered_page", None)
+        self._rendered_page = self.page
+        self.mark_current(self.app.now_playing, scroll="center" if new_page else None)
+
+    # -- now-playing highlight -----------------------------------------------------------
+    def _item_mrl(self, key) -> str | None:
+        if not isinstance(key, tuple) or len(key) < 2:
+            return None
+        if key[0] == "file":
+            return to_mrl(key[1])
+        if key[0] == "media":
+            return key[1]
+        if key[0] == "pl-item":
+            items = self.store.data["playlists"].get(key[1], [])
+            return items[key[2]] if 0 <= key[2] < len(items) else None
+        return None
+
+    @staticmethod
+    def _same_media(a: str, b: str) -> bool:
+        pa, pb = mrl_to_path(a), mrl_to_path(b)
+        if pa and pb:
+            return os.path.normcase(os.path.abspath(pa)) == os.path.normcase(os.path.abspath(pb))
+        return a == b
+
+    def mark_current(self, mrl: str | None, scroll: str | None = None) -> None:
+        """Highlight the row(s) for the media that's playing; optionally scroll to it."""
+        first = None
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            m = self._item_mrl(it.data(KEY))
+            on = bool(mrl and m and self._same_media(m, mrl))
+            if bool(it.data(rows.CURRENT)) != on:
+                it.setData(rows.CURRENT, on)
+            if on and first is None:
+                first = it
+        if scroll and first is not None and not first.isHidden():
+            hint = QAbstractItemView.PositionAtCenter if scroll == "center" else QAbstractItemView.EnsureVisible
+            self.list.scrollToItem(first, hint)
+        self.list.viewport().update()
 
     def _add(self, text: str, **kw) -> None:
         if not self.details:

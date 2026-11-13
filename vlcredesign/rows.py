@@ -99,7 +99,15 @@ class RowDelegate(QStyledItemDelegate):
 
         sel = bool(option.state & QStyle.State_Selected)
         hover = bool(option.state & QStyle.State_MouseOver)
+        playing = bool(index.data(CURRENT)) and not index.data(CHECK)
         h = self._hover_amount(index.row(), hover and not sel)
+        if playing:
+            # now-playing row: warm tint + accent bar on the left edge
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(theme.ACCENT_BG))
+            p.drawRoundedRect(r.adjusted(4, 1, -4, -1), 4, 4)
+            p.setBrush(QColor(theme.ACCENT))
+            p.drawRoundedRect(QRectF(r.left() + 4, r.top() + 6, 3, r.height() - 12), 1.5, 1.5)
         if sel or h > 0.0:
             p.setPen(Qt.NoPen)
             col = QColor(theme.ACCENT_BG if sel else theme.HOVER)
@@ -152,6 +160,14 @@ class RowDelegate(QStyledItemDelegate):
                 if ic:
                     col = theme.ACCENT if current else "#7a7a7a"
                     p.drawPixmap(QPointF(tr_.center().x() - 8, tr_.center().y() - 8), icons.pixmap(ic, 16, col))
+            if current and not index.data(CHECK):
+                # "playing" badge over the thumbnail
+                p.setOpacity(1.0)
+                p.fillRect(tr_, QColor(0, 0, 0, 90))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(20, 20, 20, 225))
+                p.drawEllipse(tr_.center(), 12, 12)
+                p.drawPixmap(QPointF(tr_.center().x() - 7, tr_.center().y() - 7), icons.pixmap("volume", 14, theme.ACCENT))
             p.restore()
             if current:
                 p.setPen(QColor(theme.ACCENT))

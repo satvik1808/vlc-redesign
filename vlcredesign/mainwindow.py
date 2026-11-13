@@ -354,6 +354,7 @@ class MainWindow(QWidget):
         self._edge_cursor = False
         self._last_chapter = -2
         self.right_panel: str | None = None
+        self.now_playing: str | None = None     # mrl highlighted in the library
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -784,6 +785,8 @@ class MainWindow(QWidget):
         start = self.store.resume_point(mrl) if (resume and self.store.get("resume", True)) else 0
         self.settings.reset_for_new_media()
         self.engine.load(mrl, start)
+        self.now_playing = mrl
+        self.library.mark_current(mrl, scroll="ensure" if self.library.isVisible() else None)
         if start:
             self.osd(f"Resumed at {fmt_short(start)}")
         self.titlebar.set_title(entry["title"])
@@ -869,6 +872,8 @@ class MainWindow(QWidget):
             entry = self.queue.current()
             self.osd(f"Couldn't play {entry['title'] if entry else 'media'}")
         if state == "stopped":
+            self.now_playing = None
+            self.library.mark_current(None)
             self.video.set_mode("idle")
             self._disable_previews()
             self.controls.seek.set_position(0)
