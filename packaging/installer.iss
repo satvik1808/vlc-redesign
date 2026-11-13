@@ -25,6 +25,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\build
 OutputBaseFilename=VLCRedesign-{#AppVersion}-setup-win64
 SetupIconFile=app.ico
+LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 Compression=lzma2/max

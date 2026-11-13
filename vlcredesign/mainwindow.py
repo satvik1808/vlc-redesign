@@ -1057,7 +1057,10 @@ class MainWindow(QWidget):
         from .engine import vlc
         QMessageBox.about(self, "About", (
             "<b>VLC Redesign</b><br>A desktop player built on the 'VLC Redesign' Figma concept.<br><br>"
-            f"Playback engine: libVLC {vlc.libvlc_get_version().decode()}<br>"
+            f"Playback engine: libVLC {vlc.libvlc_get_version().decode()}<br><br>"
+            "Copyright © 2026 satvik1808. Free software under the GNU GPL v3 or later; "
+            "there is NO WARRANTY.<br>"
+            "<a href='https://github.com/satvik1808/vlc-redesign'>github.com/satvik1808/vlc-redesign</a><br><br>"
             "Not affiliated with VideoLAN. VLC is a trademark of VideoLAN."))
 
     def _crumb_clicked(self) -> None:

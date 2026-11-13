@@ -108,6 +108,18 @@ vlcredesign/
   store.py       JSON persistence and helpers
 ```
 
+## License
+
+Copyright (C) 2026 satvik1808
+
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU General Public License as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version. See [LICENSE](LICENSE).
+
+The packaged builds also bundle libVLC and its plugins (LGPL-2.1+ / GPL-2.0+), Qt / PySide6
+(LGPL-3.0), python-vlc (LGPL-2.1+) and Python (PSF). Their licences and source links are in
+`THIRD-PARTY-NOTICES.txt` and `vlc\COPYING.txt` inside the app.
+
 ### Implementation notes
 - libVLC draws into a native child window. The overlay panels are native windows too, so
   they can sit on top of the video. Rounded corners come from window masks.

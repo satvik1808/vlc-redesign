@@ -49,6 +49,8 @@ $vlcVer = (Get-Item (Join-Path $VlcDir "libvlc.dll")).VersionInfo.ProductVersion
 @"
 VLC Redesign $version
 https://github.com/satvik1808/vlc-redesign
+Copyright (C) 2026 satvik1808. Licensed under the GNU GPL v3 or later - see LICENSE.txt.
+Source code: https://github.com/satvik1808/vlc-redesign
 
 This package bundles third-party software:
 
@@ -62,6 +64,7 @@ This package bundles third-party software:
 * Python - PSF License. Source: https://www.python.org/
 "@ | Set-Content -Encoding utf8 (Join-Path $dist "THIRD-PARTY-NOTICES.txt")
 Copy-Item (Join-Path $root "README.md") $dist
+Copy-Item (Join-Path $root "LICENSE") (Join-Path $dist "LICENSE.txt")
 
 # 4. portable zip
 $zip = Join-Path $build "VLCRedesign-$version-portable-win64.zip"
