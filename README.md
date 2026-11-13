@@ -108,6 +108,18 @@ vlcredesign/
   store.py       JSON persistence and helpers
 ```
 
+## Planned / future upgrades
+
+Not implemented yet:
+
+- Actual VLC icons
+- Winter-themed and Halloween-themed icons
+- YouTube integration
+- YouTube direct download (scope to be decided)
+- More translucency on the right-hand panels
+- Auto-update from within the app
+- Generalized aggregator and viewer for Prime Video and other streaming services
+
 ## License
 
 Copyright (C) 2026 satvik1808

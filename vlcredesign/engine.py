@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -96,6 +97,13 @@ class Engine(QObject):
         self._filter_args: list[str] = []
         self._vlc_event.connect(self._handle_event)
         self._poll = QTimer(self, interval=200, timeout=self._tick)
+        # resume guard: keep audio silent until a resumed start has really landed (see load)
+        self._guard_start: int | None = None
+        self._guard_seen: int | None = None
+        self._guard_deadline = 0.0
+        self._guard_timer = QTimer(self, interval=15, timeout=self._guard_tick)
+        self._ramp_step = 0
+        self._ramp_timer = QTimer(self, interval=25, timeout=self._ramp_tick)
         self._create_player([])
 
     def _create_player(self, filter_args: list[str]) -> None:
@@ -165,7 +173,12 @@ class Engine(QObject):
             if name == "playing":
                 self._poll.start()
                 self.player.audio_set_volume(self._volume)
-                self.player.audio_set_mute(self._muted)
+                if self._guard_start is not None:
+                    self.player.audio_set_mute(True)
+                    self._guard_deadline = time.monotonic() + 2.0
+                    self._guard_timer.start()
+                else:
+                    self.player.audio_set_mute(self._muted)
                 if abs(self.player.get_rate() - self._rate) > 1e-3:
                     self.player.set_rate(self._rate)
                 self._apply_media_state()
@@ -184,6 +197,37 @@ class Engine(QObject):
                 self.set_adjust(*self._vstate["adjust"])   # needs a live video output
             self.voutChanged.emit(self.has_video)
             self.tracksChanged.emit()
+
+    # -- resume guard: silent start, then a short fade-in -------------------------------
+    def _guard_tick(self) -> None:
+        t = self.player.get_time()
+        if self._guard_start is None:
+            self._guard_timer.stop()
+            return
+        landed = t >= self._guard_start - 3000      # time has jumped to the resume point
+        if landed and self._guard_seen is None:
+            self._guard_seen = t
+        # wait until playback has visibly advanced past the landing point (audio preroll done)
+        if (self._guard_seen is not None and t - self._guard_seen >= 120) or time.monotonic() > self._guard_deadline:
+            self._release_guard()
+
+    def _release_guard(self) -> None:
+        self._guard_timer.stop()
+        self._guard_start = None
+        if self._muted:
+            self.player.audio_set_mute(True)
+            return
+        self._ramp_step = 0
+        self.player.audio_set_volume(0)
+        self.player.audio_set_mute(False)
+        self._ramp_timer.start()
+
+    def _ramp_tick(self) -> None:
+        self._ramp_step += 1
+        frac = min(1.0, self._ramp_step / 6)          # ~150 ms
+        self.player.audio_set_volume(int(round(self._volume * frac)))
+        if frac >= 1.0:
+            self._ramp_timer.stop()
 
     def _tick(self) -> None:
         self.timeChanged.emit(max(0, self.player.get_time()))
@@ -241,8 +285,16 @@ class Engine(QObject):
             self._create_player(wanted)
         self.mrl = mrl
         media = self.instance.media_new(mrl)
+        self._ramp_timer.stop()
+        self._guard_timer.stop()
+        self._guard_start = None
         if start_ms > 0:
             media.add_option(f":start-time={start_ms / 1000:.3f}")
+            # With :start-time libVLC first decodes a little audio from 0:00, drops it and
+            # resets the audio stream twice before the real sound starts - an audible
+            # click/stutter. Start muted and fade in once playback has landed.
+            self._guard_start = start_ms
+            self._guard_seen = None
         if paused:
             media.add_option(":start-paused")
         self.media = media
@@ -305,6 +357,7 @@ class Engine(QObject):
 
     def set_volume(self, v: int) -> None:
         self._volume = int(max(0, min(125, v)))
+        self._ramp_timer.stop()
         self.player.audio_set_volume(self._volume)
         if self._muted and v > 0:
             self.set_muted(False)
@@ -312,7 +365,8 @@ class Engine(QObject):
 
     def set_muted(self, m: bool) -> None:
         self._muted = bool(m)
-        self.player.audio_set_mute(self._muted)
+        if self._guard_start is None:          # during the resume guard the release applies it
+            self.player.audio_set_mute(self._muted)
         self.volumeChanged.emit(self._volume, self._muted)
 
     def set_rate(self, r: float) -> None:

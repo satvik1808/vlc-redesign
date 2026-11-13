@@ -389,6 +389,8 @@ class MainWindow(QWidget):
         self._last_mouse = QPoint()
         self._idle_ms = 0
         self.previewer = FramePreviewer(self)
+        self._preview_pending: str | None = None
+        self._preview_timer = QTimer(self, singleShot=True, interval=1500, timeout=self._open_pending_previews)
         self.preview_popup = PreviewPopup()
         self._chapter_names: list[tuple[int, str]] = []
         self._controls_shown = True
@@ -904,10 +906,17 @@ class MainWindow(QWidget):
         self.video.set_mode("video" if has_video else "audio", entry["title"] if entry else "")
         mrl = self.engine.mrl
         if has_video and mrl and mrl_to_path(mrl):      # local files only: no second network stream
-            w, h = self.engine.video_size()
-            self._enable_previews(mrl, (w / h) if w and h else 16 / 9)
+            # open the preview decoder a little later, so nothing extra runs while playback starts
+            self._preview_pending = mrl
+            self._preview_timer.start()
         else:
             self._disable_previews()
+
+    def _open_pending_previews(self) -> None:
+        mrl, self._preview_pending = self._preview_pending, None
+        if mrl and mrl == self.engine.mrl and self.engine.has_video:
+            w, h = self.engine.video_size()
+            self._enable_previews(mrl, (w / h) if w and h else 16 / 9)
 
     # -- seek-bar hover previews -----------------------------------------------------
     def _enable_previews(self, mrl: str, aspect: float) -> None:
@@ -920,6 +929,8 @@ class MainWindow(QWidget):
         self.controls.seek.previews = True
 
     def _disable_previews(self) -> None:
+        self._preview_timer.stop()
+        self._preview_pending = None
         self.controls.seek.previews = False
         self.preview_popup.fade_out()
         self.previewer.close()

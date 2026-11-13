@@ -43,6 +43,10 @@ class FramePreviewer(QObject):
         self._inflight: int | None = None
         self._wanted: int | None = None
         self._watchdog = QTimer(self, singleShot=True, interval=450, timeout=self._give_up)
+        # if the first frame never arrives (rare libVLC start hiccup), reopen once
+        self._start_watch = QTimer(self, singleShot=True, interval=2500, timeout=self._start_stalled)
+        self._aspect = 16 / 9
+        self._retried = False
         self._gotFrame.connect(self._on_frame)
         # keep the ctypes callbacks alive for as long as the player exists
         self._cb_lock = vlc.CallbackDecorators.VideoLockCb(self._vlc_lock)
@@ -70,6 +74,8 @@ class FramePreviewer(QObject):
     def open(self, mrl: str, aspect: float) -> None:
         if mrl == self._mrl and self._player is not None:
             return
+        if mrl != self._mrl:
+            self._retried = False
         self.close()
         if not mrl:
             return
@@ -80,6 +86,7 @@ class FramePreviewer(QObject):
                 "--no-stats", "--no-snapshot-preview",
             ])
         aspect = aspect if aspect and aspect > 0.2 else 16 / 9
+        self._aspect = aspect
         self._w = PREVIEW_W
         self._h = max(16, int(round(PREVIEW_W / aspect / 2)) * 2)
         self._buf = ctypes.create_string_buffer(self._w * self._h * 4)
@@ -96,9 +103,21 @@ class FramePreviewer(QObject):
         player.video_set_format("RV32", self._w, self._h, self._w * 4)
         self._player = player
         player.play()
+        self._start_watch.start()
+
+    def _start_stalled(self) -> None:
+        if self._player is None or self._ready or self._retried:
+            return
+        mrl, aspect = self._mrl, self._aspect
+        wanted = self._wanted
+        self.close()
+        self.open(mrl, aspect)
+        self._retried = True          # (open() resets it for a new file)
+        self._wanted = wanted
 
     def close(self) -> None:
         self._watchdog.stop()
+        self._start_watch.stop()
         p, self._player = self._player, None
         self._mrl = None
         self._ready = False
