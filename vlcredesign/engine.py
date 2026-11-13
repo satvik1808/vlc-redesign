@@ -11,7 +11,12 @@ def _prepare_libvlc_path() -> None:
     """Help python-vlc find libvlc.dll (VLC install dir, or VLC_PATH env var)."""
     if sys.platform != "win32" or os.environ.get("PYTHON_VLC_LIB_PATH"):
         return
-    candidates = [os.environ.get("VLC_PATH", "")]
+    candidates = []
+    if getattr(sys, "frozen", False):
+        # packaged build: libVLC + plugins ship in a "vlc" folder next to the app
+        candidates.append(os.path.join(os.path.dirname(sys.executable), "vlc"))
+        candidates.append(os.path.join(getattr(sys, "_MEIPASS", ""), "vlc"))
+    candidates.append(os.environ.get("VLC_PATH", ""))
     for base in (os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", "")):
         if base:
             candidates.append(os.path.join(base, "VideoLAN", "VLC"))

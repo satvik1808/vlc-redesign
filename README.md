@@ -7,7 +7,33 @@ overlay panels for the queue, settings and tracks.
 
 > This is a concept implementation. It isn't affiliated with VideoLAN. VLC is a trademark of VideoLAN.
 
-## Run it
+## Download
+
+Get the latest build from the [Releases page](https://github.com/satvik1808/vlc-redesign/releases/latest):
+
+- **`VLCRedesign-<version>-setup-win64.exe`**: the installer. It installs for your user
+  without admin rights, adds a Start menu entry, and can add the player to "Open with" for
+  video and audio files. Uninstall it from Windows Settings → Apps.
+- **`VLCRedesign-<version>-portable-win64.zip`**: unzip and run `VLCRedesign.exe`.
+
+Both are self-contained: libVLC is bundled, so you don't need VLC or Python installed.
+The builds aren't code-signed, so Windows SmartScreen may warn the first time you run one.
+Click **More info → Run anyway**.
+
+## Build the installer
+
+```bash
+.venv\Scripts\python -m pip install pyinstaller
+```
+
+```bash
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+The build needs VLC 3 (64-bit) installed, because its libVLC is what gets bundled, and
+[Inno Setup 6](https://jrsoftware.org/isinfo.php). The output goes to `build\`.
+
+## Run from source
 
 Requirements:
 - Windows 10/11.
