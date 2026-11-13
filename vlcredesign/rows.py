@@ -2,11 +2,11 @@
 tracks, library), so they all share the design's row styling."""
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtCore import QModelIndex, QPointF, QRectF, QSize, Qt, Slot
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QStyle, QStyledItemDelegate
 
-from . import icons, theme
+from . import icons, theme, thumbs
 
 ICON = Qt.UserRole + 1      # icon name
 RIGHT = Qt.UserRole + 2     # right-aligned text
@@ -17,12 +17,27 @@ HEADER = Qt.UserRole + 6    # section header row
 FAINT = Qt.UserRole + 7     # dim "action" row (Add, Create playlist, ...)
 CHECK = Qt.UserRole + 8     # show check-mark column (tracks popup)
 SUB = Qt.UserRole + 9       # small secondary text below title
+THUMB = Qt.UserRole + 10    # local file path: draw a preview thumbnail instead of the icon
+
+THUMB_W, THUMB_H = 64, 36
 
 
 class RowDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        thumbs.loader().ready.connect(self._thumb_ready)
+
+    @Slot(str)
+    def _thumb_ready(self, _path: str) -> None:
+        view = self.parent()
+        if view is not None and view.isVisible():
+            view.viewport().update()
+
     def sizeHint(self, option, index: QModelIndex) -> QSize:
         if index.data(HEADER):
             return QSize(100, 42)
+        if index.data(THUMB):
+            return QSize(100, THUMB_H + 12)
         if index.data(SUB):
             return QSize(100, 44)
         return QSize(100, 34)
@@ -66,7 +81,32 @@ class RowDelegate(QStyledItemDelegate):
             p.drawText(QRectF(x, r.top(), 24, r.height()), Qt.AlignVCenter | Qt.AlignLeft, str(num))
             x += 30
         ic = index.data(ICON)
-        if ic:
+        thumb_path = index.data(THUMB)
+        if thumb_path:
+            tr_ = QRectF(x - 4, r.center().y() - THUMB_H / 2, THUMB_W, THUMB_H)
+            clip = QPainterPath()
+            clip.addRoundedRect(tr_, 4, 4)
+            p.save()
+            p.setClipPath(clip)
+            pm = thumbs.loader().get(thumb_path)
+            if pm is not None and not pm.isNull():
+                # cover-fit the frame into the slot
+                s = max(tr_.width() / pm.width(), tr_.height() / pm.height())
+                w, h = pm.width() * s, pm.height() * s
+                p.setRenderHint(QPainter.SmoothPixmapTransform)
+                p.drawPixmap(QRectF(tr_.center().x() - w / 2, tr_.center().y() - h / 2, w, h), pm, QRectF(pm.rect()))
+            else:
+                p.fillRect(tr_, QColor(theme.TRACK))
+                if ic:
+                    col = theme.ACCENT if current else "#7a7a7a"
+                    p.drawPixmap(QPointF(tr_.center().x() - 8, tr_.center().y() - 8), icons.pixmap(ic, 16, col))
+            p.restore()
+            if current:
+                p.setPen(QColor(theme.ACCENT))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(tr_.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+            x += THUMB_W + 8
+        elif ic:
             col = theme.ACCENT if current else ("#7a7a7a" if not faint else theme.TEXT_FAINT)
             p.drawPixmap(QPointF(x, r.center().y() - 8), icons.pixmap(ic, 16, col))
             x += 30
@@ -113,7 +153,7 @@ def make_list(parent=None, draggable: bool = False) -> QListWidget:
 def item(text: str, **roles) -> QListWidgetItem:
     it = QListWidgetItem(text)
     mapping = {"icon": ICON, "right": RIGHT, "current": CURRENT, "num": NUM, "key": KEY,
-               "header": HEADER, "faint": FAINT, "check": CHECK, "sub": SUB}
+               "header": HEADER, "faint": FAINT, "check": CHECK, "sub": SUB, "thumb": THUMB}
     for k, v in roles.items():
         it.setData(mapping[k], v)
     if roles.get("header"):

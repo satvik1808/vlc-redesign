@@ -6,7 +6,7 @@ import os
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QFileInfo, QUrl, Qt
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
     QPushButton, QVBoxLayout, QWidget,
@@ -14,14 +14,66 @@ from PySide6.QtWidgets import (
 
 from . import rows, theme
 from .rows import KEY
-from .store import AUDIO_EXT, MEDIA_EXT, fmt_short, kind_of, title_of, to_mrl
+from .store import AUDIO_EXT, MEDIA_EXT, fmt_short, kind_of, mrl_to_path, title_of, to_mrl
 from .widgets import IconButton, Panel, dim_label
 
 if TYPE_CHECKING:
     from .mainwindow import MainWindow
 
 RAIL_W = 40
-PANEL_W = 300
+PANEL_W = 300          # default width of the browsable panel (right of the rail)
+PANEL_MIN_W = 220
+PANEL_MAX_W = 900
+MIN_VIDEO_W = 240      # keep at least this much of the stage visible beside the library
+
+
+class _ResizeGrip(QWidget):
+    """Thin handle on the library's right edge; drag to resize, double-click to reset."""
+
+    W = 6
+
+    def __init__(self, lib: "Library"):
+        super().__init__(lib)
+        self.lib = lib
+        self.setCursor(Qt.SizeHorCursor)
+        self.setToolTip("Drag to resize  ·  double-click to reset")
+        self._drag = False
+        self._hover = False
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = True
+            self.update()
+
+    def mouseMoveEvent(self, e):
+        if self._drag:
+            x = self.lib.mapFromGlobal(e.globalPosition().toPoint()).x()
+            self.lib.set_panel_width(x - RAIL_W)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag:
+            self._drag = False
+            self.update()
+            self.lib.store.save()
+
+    def mouseDoubleClickEvent(self, e):
+        self.lib.set_panel_width(PANEL_W)
+        self.lib.store.save()
+
+    def paintEvent(self, _):
+        if self._hover or self._drag:
+            p = QPainter(self)
+            c = QColor(theme.ACCENT)
+            c.setAlpha(255 if self._drag else 140)
+            p.fillRect(self.width() - 2, 0, 2, self.height(), c)
 
 
 def fmt_size(n: int) -> str:
@@ -64,6 +116,7 @@ class Library(Panel):
         self.fwd_stack: list[tuple] = []
         self.sort_desc = False
         self.details = True
+        self.grip = _ResizeGrip(self)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -197,6 +250,24 @@ class Library(Panel):
         return any(norm.startswith(os.path.normcase(os.path.abspath(f))) for f in self.store.data["folders"]["music"])
 
     # rendering ---------------------------------------------------------------
+    # -- width ---------------------------------------------------------------------
+    def total_width(self, stage_w: int) -> int:
+        """Rail + panel width to use on a stage of the given width (saved width, clamped)."""
+        w = int(self.store.get("library_width", PANEL_W) or PANEL_W)
+        hi = min(PANEL_MAX_W, stage_w - RAIL_W - MIN_VIDEO_W)
+        return RAIL_W + max(PANEL_MIN_W, min(w, hi))
+
+    def set_panel_width(self, w: int) -> None:
+        stage_w = self.parentWidget().width()
+        hi = max(PANEL_MIN_W, min(PANEL_MAX_W, stage_w - RAIL_W - MIN_VIDEO_W))
+        self.store.set("library_width", max(PANEL_MIN_W, min(int(w), hi)))
+        self.app.layout_stage()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.grip.setGeometry(self.width() - _ResizeGrip.W, 0, _ResizeGrip.W, self.height())
+        self.grip.raise_()
+
     def render(self) -> None:
         kind = self.page[0]
         rail_key = {"folder": self.page[2] if len(self.page) > 2 else "videos", "playlist": "playlists"}.get(kind, kind)
@@ -215,6 +286,7 @@ class Library(Panel):
         if not self.details:
             kw.pop("right", None)
             kw.pop("sub", None)
+            kw.pop("thumb", None)
         self.list.addItem(rows.item(text, **kw))
 
     def _sorted(self, seq, key):
@@ -228,14 +300,14 @@ class Library(Panel):
         self._add("Continue Watching", header=True, key=("history",))
         for h in cw:
             self._add(h["title"], icon="film", right=f"{fmt_short(h['position'])} / {fmt_short(h['length'])}",
-                      key=("media", h["mrl"]))
+                      key=("media", h["mrl"]), thumb=mrl_to_path(h["mrl"]))
         if not cw:
             self._add("Nothing in progress", faint=True)
         n += len(cw)
         audio = [h for h in st.data["history"] if h["kind"] == "audio"][:3]
         self._add("Listen Again", header=True, key=("music",))
         for h in audio:
-            self._add(h["title"], icon="note", key=("media", h["mrl"]))
+            self._add(h["title"], icon="note", key=("media", h["mrl"]), thumb=mrl_to_path(h["mrl"]))
         if not audio:
             self._add("No recent music", faint=True)
         n += len(audio)
@@ -283,7 +355,7 @@ class Library(Panel):
         for f in self._sorted(files, key):
             ext = os.path.splitext(f)[1].lower()
             self._add(os.path.basename(f), icon="note" if ext in AUDIO_EXT else "film",
-                      right=fmt_size(QFileInfo(f).size()), key=("file", f))
+                      right=fmt_size(QFileInfo(f).size()), key=("file", f), thumb=f)
         return len(dirs) + len(files)
 
     def _page_network(self) -> int:
@@ -313,7 +385,8 @@ class Library(Panel):
         if items:
             self._add("Play all", icon="playback", faint=True, key=("play-playlist", name))
         for i, mrl in enumerate(items):
-            self._add(title_of(mrl), icon="note" if kind_of(mrl) == "audio" else "film", key=("pl-item", name, i))
+            self._add(title_of(mrl), icon="note" if kind_of(mrl) == "audio" else "film", key=("pl-item", name, i),
+                      thumb=mrl_to_path(mrl))
         return len(items)
 
     def _page_history(self) -> int:
@@ -324,7 +397,7 @@ class Library(Panel):
         for h in hist:
             right = f"{fmt_short(h['position'])} / {fmt_short(h['length'])}" if h.get("length") else ""
             self._add(h["title"], icon={"audio": "note", "video": "film"}.get(h["kind"], "link"),
-                      right=right, key=("media", h["mrl"]))
+                      right=right, key=("media", h["mrl"]), thumb=mrl_to_path(h["mrl"]))
         return len(hist)
 
     # actions -----------------------------------------------------------------

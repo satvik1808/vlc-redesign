@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
 
 from . import icons, theme, winframe
 from .engine import Engine, parse_duration_async, parsed_duration
-from .library import PANEL_W, RAIL_W, Library, scan_folder
+from .library import Library, scan_folder
+from . import thumbs
 from .panels import QueuePanel, SettingsPanel, TracksPopup, subtitle_args_from_store
 from .store import MEDIA_EXT, SUB_EXT, Store, fmt_short, fmt_time, mrl_to_path, title_of, to_mrl
 from .widgets import IconButton, Panel, PlayButton, SeekBar, VolumeWedge
@@ -448,7 +449,7 @@ class MainWindow(QWidget):
         self.video.radius = 0 if fs else 8
         self.video.setGeometry(vr)
         self.video.resizeEvent(None)
-        lib_w = RAIL_W + PANEL_W
+        lib_w = self.library.total_width(r.width())
         self.library.setGeometry(0, 0, lib_w, r.height())
         pw = min(340, max(280, vr.width() // 3))
         side = QRect(vr.right() - pw - 8, vr.top() + 10, pw, max(120, vr.height() - 20))
@@ -1120,6 +1121,7 @@ class MainWindow(QWidget):
             st.save()
         except OSError:
             pass
+        thumbs.loader().shutdown()
         self._clear_edge_cursor()
         for t in (self._stats_timer, self._parse_timer, self._history_timer, self._autohide,
                   self._sleep_timer, self._osd_timer):
