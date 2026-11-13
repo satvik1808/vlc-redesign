@@ -26,6 +26,7 @@ Write-Host "== VLC Redesign $version"
     --icon (Join-Path $root "packaging\app.ico") `
     --paths $root --distpath (Join-Path $build "dist") --workpath (Join-Path $build "work") `
     --specpath $build --exclude-module tkinter `
+    --add-data "$(Join-Path $root 'vlcredesign\assets');vlcredesign\assets" `
     packaging\launcher.py
 if ($LASTEXITCODE) { throw "PyInstaller failed" }
 
@@ -58,6 +59,10 @@ This package bundles third-party software:
   libVLC is LGPL-2.1-or-later; some plugins are GPL-2.0-or-later. See vlc\COPYING.txt.
   Source code: https://download.videolan.org/pub/videolan/vlc/
   VLC is a trademark of VideoLAN. This project is not affiliated with VideoLAN.
+
+* VLC cone artwork (assets\vlc-cone-256.png) - taken from VLC's application icon,
+  (c) VideoLAN, distributed with VLC under GPL-2.0-or-later. Used here to identify VLC,
+  on which this player is built. The cone is a VideoLAN trademark.
 
 * Qt 6 / PySide6 - (c) The Qt Company, LGPL-3.0. Source: https://download.qt.io/
 * python-vlc - LGPL-2.1-or-later. Source: https://github.com/oaubert/python-vlc

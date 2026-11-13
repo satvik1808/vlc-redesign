@@ -8,14 +8,14 @@ import re
 from PySide6.QtCore import (
     QByteArray, QEasingCurve, QEvent, QPoint, QRect, QRectF, QStandardPaths, Qt, QTimer, QUrl,
 )
-from PySide6.QtGui import QColor, QCursor, QFont, QKeySequence, QPainter, QPainterPath, QRegion, QShortcut
+from PySide6.QtGui import QColor, QCursor, QFont, QKeySequence, QPainter, QPainterPath, QPixmap, QRegion, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QInputDialog, QLabel, QMenu,
     QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from . import icons, theme, winframe
+from . import __version__, icons, theme, winframe
 from .engine import Engine, parse_duration_async, parsed_duration
 from .library import Library, scan_folder
 from . import thumbs
@@ -169,6 +169,18 @@ class TitleBar(QWidget):
         self.win.toggle_maximized()
 
 
+_CONE: QPixmap | None = None
+
+
+def cone_pixmap() -> QPixmap | None:
+    """The VLC cone artwork (from VLC's own icon, GPL - see THIRD-PARTY-NOTICES)."""
+    global _CONE
+    if _CONE is None:
+        pm = QPixmap(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "vlc-cone-256.png"))
+        _CONE = pm if not pm.isNull() else QPixmap()
+    return _CONE if not _CONE.isNull() else None
+
+
 class VideoSurface(QWidget):
     """Native window that libVLC renders into. Paints the idle / audio-only state itself."""
 
@@ -219,10 +231,19 @@ class VideoSurface(QWidget):
         p.fillRect(QRect(0, floor, r.width(), r.height() - floor), QColor("#272625"))
         t = self._fade.value
         p.setOpacity(t)
-        cell = max(4, min(10, r.height() // 45))
         p.save()
         p.setClipRect(QRect(0, 0, r.width(), floor))       # the cone rises out of the floor
-        icons.paint_pixel_cone(p, r.width() / 2, floor + round((1.0 - t) * cell * 4), cell)
+        cone = cone_pixmap()
+        if cone is not None:
+            ch = max(96, min(230, int(r.height() * 0.30)))
+            rise = round((1.0 - t) * ch * 0.18)
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            # the artwork has a little transparent margin at the bottom; sit it on the floor line
+            p.drawPixmap(QRectF(r.width() / 2 - ch / 2, floor - ch * 0.985 + rise, ch, ch), cone,
+                         QRectF(cone.rect()))
+        else:
+            cell = max(4, min(10, r.height() // 45))
+            icons.paint_pixel_cone(p, r.width() / 2, floor + round((1.0 - t) * cell * 4), cell)
         p.restore()
         f = QFont(self.font())
         f.setPixelSize(13)
@@ -241,6 +262,10 @@ class VideoSurface(QWidget):
             p.setFont(f)
             p.drawText(QRect(0, floor + 48, r.width(), 20), Qt.AlignCenter,
                        "Ctrl+L library  ·  Ctrl+N network stream  ·  F fullscreen")
+            f.setPixelSize(11)
+            p.setFont(f)
+            p.setPen(QColor(255, 255, 255, 60))
+            p.drawText(QRect(0, r.height() - 30, r.width(), 20), Qt.AlignCenter, f"VLC Redesign  v{__version__}")
 
     def nativeEvent(self, event_type, message):
         res = winframe.handle_child_edge(self, message)

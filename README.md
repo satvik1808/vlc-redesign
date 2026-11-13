@@ -132,6 +132,10 @@ The packaged builds also bundle libVLC and its plugins (LGPL-2.1+ / GPL-2.0+), Q
 (LGPL-3.0), python-vlc (LGPL-2.1+) and Python (PSF). Their licences and source links are in
 `THIRD-PARTY-NOTICES.txt` and `vlc\COPYING.txt` inside the app.
 
+The cone on the start screen (`vlcredesign/assets/vlc-cone-256.png`) is VLC's own icon artwork,
+(c) VideoLAN, distributed with VLC under GPL-2.0-or-later. The VLC name and cone are trademarks of
+VideoLAN; this project uses them only to identify VLC and is not affiliated with VideoLAN.
+
 ### Implementation notes
 - libVLC draws into a native child window. The overlay panels are native windows too, so
   they can sit on top of the video. Rounded corners come from window masks.
